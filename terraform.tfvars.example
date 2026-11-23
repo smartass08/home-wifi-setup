@@ -1,0 +1,66 @@
+# Copy this file to terraform.tfvars and fill in your private values.
+# terraform.tfvars is git-ignored so secrets never enter version control.
+
+ssh_user             = "root"
+ssh_private_key_path = "~/.ssh/openwrt_rsa"
+
+admin_username = "admin"
+admin_password = "CHANGE_ME_STRONG_PASSWORD"
+
+timezone_name  = "Asia/Kolkata"
+timezone_posix = "IST-5:30"
+
+network_gateway = "192.168.2.1"
+network_dns     = "192.168.2.1"
+bridge_ports    = ["lan1", "lan2", "lan3", "lan4", "wan"]
+packet_steering = true
+
+wifi = {
+  ssid            = "MyHomeWiFi"
+  passphrase      = "CHANGE_ME_WIFI_PASSPHRASE"
+  country         = "PA"
+  encryption      = "sae-mixed"
+  ieee80211w      = 1
+  mobility_domain = "4f57"
+  ft_over_ds      = 0
+}
+
+usteer = {
+  roam_scan_snr          = -65
+  roam_trigger_snr       = -72
+  signal_diff_threshold  = 10
+  band_steering_interval = 30000
+  band_steering_min_snr  = -60
+}
+
+led_schedule = {
+  enabled  = true
+  off_hour = 21
+  on_hour  = 11
+  day_led  = "green:status"
+}
+
+access_points = {
+  room-1 = {
+    ip         = "192.168.2.11"
+    mac        = "00:11:22:33:44:01"
+    radio2g_en = true
+    ch2g       = 1
+    ht2g       = "HE20"
+    tx2g       = 15
+    ch5g       = 36
+    ht5g       = "HE160"
+    tx5g       = 22
+  }
+  hallway = {
+    ip         = "192.168.2.12"
+    mac        = "00:11:22:33:44:02"
+    radio2g_en = true
+    ch2g       = 6
+    ht2g       = "HE20"
+    tx2g       = 15
+    ch5g       = 149
+    ht5g       = "HE80"
+    tx5g       = 20
+  }
+}

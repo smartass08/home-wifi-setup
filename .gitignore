@@ -1,0 +1,27 @@
+# Terraform / OpenTofu state and cache
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Private variables & secrets (commit terraform.tfvars.example instead)
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Local device backups and firmware dumps
+backups/
+*.bin
+*.ubi
+*.itb
+*.key
+*.pem
+
+# OS noise
+.DS_Store
