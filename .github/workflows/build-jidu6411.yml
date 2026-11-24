@@ -46,9 +46,9 @@ jobs:
           git clone --depth 1 --branch main https://github.com/openwrt/openwrt.git openwrt
           cd openwrt
 
-          # 1. Merge JioRouter AX6000 (JIDU6411) device support (PR #26498)
-          git fetch --depth 50 origin pull/26498/head
-          git merge --no-edit FETCH_HEAD
+          # 1. Apply JioRouter AX6000 (JIDU6411) device support (PR #26498)
+          curl -fsSL "https://github.com/openwrt/openwrt/pull/26498.patch" | git apply --check
+          curl -fsSL "https://github.com/openwrt/openwrt/pull/26498.patch" | git apply
 
           # 2. Add JIDU6J11 IPQ9574 BDF and ath11k 512MB RAM OOM fixes (PR #24254)
           mkdir -p package/firmware/ipq-wifi/src package/kernel/mac80211/patches/ath11k
