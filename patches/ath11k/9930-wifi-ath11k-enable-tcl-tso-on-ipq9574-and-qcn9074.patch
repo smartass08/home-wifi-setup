@@ -1,0 +1,38 @@
+From: Phase 3b QCN9074 TCL TSO Fix <local@jidu6411>
+Subject: [PATCH] wifi: ath11k: enable TCL TSO on QCN9074/IPQ9574 and fix bridged GRO csum
+
+1. Enable .tx_tso = true for QCN9074 (5G PCIe) and IPQ9574 (2.4G AHB).
+2. Always enable TCL IP/TCP checksum offload when tso is true: bridged GRO
+   frames forwarded from EDMA carry CHECKSUM_UNNECESSARY instead of
+   CHECKSUM_PARTIAL, so skipping csum offload caused corrupted TCP checksums
+   after TCL rewrote IP length, IP ID, and TCP sequence numbers.
+
+--- a/drivers/net/wireless/ath/ath11k/core.c
++++ b/drivers/net/wireless/ath/ath11k/core.c
+@@ -116,6 +116,7 @@
+ 		.sram_dump = {},
+ 
+ 		.tcl_ring_retry = true,
++		.tx_tso = true,
+ 		.tx_ring_size = DP_TCL_DATA_RING_SIZE,
+ 		.smp2p_wow_exit = false,
+ 		.support_dual_stations = false,
+@@ -467,6 +468,7 @@
+ 		.sram_dump = {},
+ 
+ 		.tcl_ring_retry = true,
++		.tx_tso = true,
+ 		.tx_ring_size = DP_TCL_DATA_RING_SIZE,
+ 		.smp2p_wow_exit = false,
+ 		.support_fw_mac_sequence = false,
+--- a/drivers/net/wireless/ath/ath11k/dp_tx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_tx.c
+@@ -891,7 +891,7 @@
+ 	ti.rbm_id = ab->hw_params.hal_params->tcl2wbm_rbm_map[ti.ring_id].rbm_id;
+ 	ti.tid = ath11k_dp_tx_get_tid(skb);
+ 	/* the IP, UDP and TCP checksum enables together, also for a batch */
+-	if (skb->ip_summed == CHECKSUM_PARTIAL)
++	if (tso || skb->ip_summed == CHECKSUM_PARTIAL)
+ 		ti.flags0 = FIELD_PREP(HAL_TCL_DATA_CMD_INFO1_IP4_CKSUM_EN, 1) |
+ 			    FIELD_PREP(HAL_TCL_DATA_CMD_INFO1_UDP4_CKSUM_EN, 1) |
+ 			    FIELD_PREP(HAL_TCL_DATA_CMD_INFO1_UDP6_CKSUM_EN, 1) |

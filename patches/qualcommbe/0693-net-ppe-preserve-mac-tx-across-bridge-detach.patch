@@ -1,0 +1,94 @@
+From: Phase 1 L2 Switchdev <local@jidu6411>
+Subject: [PATCH] net: ethernet: qualcomm: ppe: preserve MAC TX on detach and fix const qualifier
+
+Preserve PPE_PORT_BRIDGE_TXMAC_EN on bridge detach (use STP disabled state
+instead) and cast const net_device * in ppe_bridge_foreign_dev_check() for
+Linux 6.18.64 -Werror=discarded-qualifiers.
+
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_bridge.c
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_bridge.c
+@@ -698,14 +698,6 @@
+ 			goto err_state;
+ 	}
+ 
+-	/* The bridge TX MAC gates packets forwarded to the port by the
+-	 * hardware bridge, it is kept disabled while a port is not
+-	 * offloaded.
+-	 */
+-	ret = ppe_port_bridge_txmac_set(ppe_dev, port, true);
+-	if (ret)
+-		goto err_datapath;
+-
+ 	ppe_bridge_port_offload_mark_set(dev, true);
+ 
+ 	ret = switchdev_bridge_port_offload(dev, dev, pb,
+@@ -722,8 +714,7 @@
+ 
+ err_offload:
+ 	ppe_bridge_port_offload_mark_set(dev, false);
+-	ppe_port_bridge_txmac_set(ppe_dev, port, false);
+-err_datapath:
++	ppe_port_stp_state_set(ppe_dev, port, PPE_STP_STATE_DISABLED);
+ 	if (!vlan_aware)
+ 		ppe_port_vsi_set(ppe_dev, port, -1);
+ 	else
+@@ -756,7 +747,7 @@
+ 					&pb->switchdev_blocking_nb);
+ 
+ 	ppe_bridge_port_offload_mark_set(dev, false);
+-	ppe_port_bridge_txmac_set(ppe_dev, port, false);
++	ppe_port_stp_state_set(ppe_dev, port, PPE_STP_STATE_DISABLED);
+ 
+ 	if (!vlan_aware)
+ 		ppe_port_vsi_set(ppe_dev, port, -1);
+@@ -1269,7 +1260,7 @@
+ 	 * a foreign port's FDB event to its PPE ports for assisted learning.
+ 	 */
+ 	if (netif_is_bridge_master(foreign_dev))
+-		return netdev_master_upper_dev_get_rcu(dev) != foreign_dev;
++		return netdev_master_upper_dev_get_rcu((struct net_device *)dev) != foreign_dev;
+ 
+ 	if (!edma_port_dev_check(foreign_dev))
+ 		return true;
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_config.c
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_config.c
+@@ -1696,28 +1696,6 @@
+ }
+ 
+ /**
+- * ppe_port_bridge_txmac_set - Enable or disable the bridge TX MAC of a port
+- * @ppe_dev: PPE device
+- * @port: PPE port to configure
+- * @enable: Enable or disable the bridge TX MAC
+- *
+- * The bridge TX MAC gates the egress of packets forwarded to the port by
+- * the L2 bridge, it does not affect packets transmitted by the CPU with
+- * an explicit destination port.
+- *
+- * Return: 0 on success, negative error code on failure.
+- */
+-int ppe_port_bridge_txmac_set(struct ppe_device *ppe_dev, int port,
+-			      bool enable)
+-{
+-	u32 reg = PPE_PORT_BRIDGE_CTRL_ADDR + PPE_PORT_BRIDGE_CTRL_INC * port;
+-
+-	return regmap_update_bits(ppe_dev->regmap, reg,
+-				  PPE_PORT_BRIDGE_TXMAC_EN,
+-				  enable ? PPE_PORT_BRIDGE_TXMAC_EN : 0);
+-}
+-
+-/**
+  * ppe_port_bridge_learning_set - Control hardware FDB learning of a port
+  * @ppe_dev: PPE device
+  * @port: PPE port to configure
+--- a/drivers/net/ethernet/qualcomm/ppe/ppe_config.h
++++ b/drivers/net/ethernet/qualcomm/ppe/ppe_config.h
+@@ -338,8 +338,6 @@
+ 			 unsigned int port_bitmap, int vid, int vsi,
+ 			 bool strip_cvid);
+ int ppe_ing_xlt_rule_clear(struct ppe_device *ppe_dev, int index);
+-int ppe_port_bridge_txmac_set(struct ppe_device *ppe_dev, int port,
+-			      bool enable);
+ int ppe_port_bridge_learning_set(struct ppe_device *ppe_dev, int port,
+ 				 bool enable);
+ int ppe_port_stp_state_set(struct ppe_device *ppe_dev, int port,

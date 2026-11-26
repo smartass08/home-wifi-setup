@@ -1,4 +1,4 @@
-name: Build OpenWrt JIDU6411 (6.18 + EDMA/IRQ Fixes)
+name: Build OpenWrt JIDU6411 (6.18 + Full Hardware Offload)
 
 on:
   workflow_dispatch:
@@ -34,56 +34,88 @@ jobs:
           path: |
             cache/dl
             cache/ccache
-          key: jidu6411-cache-${{ github.run_id }}
-          restore-keys: jidu6411-cache-
+          key: jidu6411-offload-cache-${{ github.run_id }}
+          restore-keys: jidu6411-offload-cache-
 
-      - name: Clone OpenWrt main and apply reviewed PRs
+      - name: Clone OpenWrt main and apply full hardware offload patch stack
         run: |
           set -euo pipefail
+          ROOT="$PWD"
           git config --global user.name "ci"
           git config --global user.email "ci@localhost"
 
           git clone --depth 1 --branch main https://github.com/openwrt/openwrt.git openwrt
           cd openwrt
 
-          # 1. Apply JioRouter AX6000 (JIDU6411) device support (PR #26498)
-          curl -fsSL "https://github.com/openwrt/openwrt/pull/26498.patch" | git apply --check
+          # 1. Apply JioRouter AX6000 (JIDU6411) device support (PR #26498) + enable q6_region for 2.4G WCSS
           curl -fsSL "https://github.com/openwrt/openwrt/pull/26498.patch" | git apply
+          cat << 'EOF' >> target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6j11.dtsi
 
-          # 2. Add JIDU6J11 IPQ9574 BDF and ath11k 512MB RAM OOM fixes (PR #24254)
+          &q6_region {
+          	status = "okay";
+          };
+          EOF
+
+          # 2. Add JIDU6J11 IPQ9574 BDF and ath11k external IRQ idempotency fix
           mkdir -p package/firmware/ipq-wifi/src package/kernel/mac80211/patches/ath11k
           curl -fsSL "https://raw.githubusercontent.com/SahilB69/jidu6j11-openwrt/main/bdf/board-jiorouter_ax6000-jidu6j11.ipq9574" \
             -o package/firmware/ipq-wifi/src/board-jiorouter_ax6000-jidu6j11.ipq9574
           curl -fsSL "https://raw.githubusercontent.com/SahilB69/jidu6j11-openwrt/main/patches/ath11k/954-wifi-ath11k-make-external-IRQ-control-idempotent.patch" \
             -o package/kernel/mac80211/patches/ath11k/954-wifi-ath11k-make-external-IRQ-control-idempotent.patch
-          curl -fsSL "https://raw.githubusercontent.com/SahilB69/jidu6j11-openwrt/main/patches/ath11k/955-wifi-ath11k-use-private-page-frag-caches-for-rxdma.patch" \
-            -o package/kernel/mac80211/patches/ath11k/955-wifi-ath11k-use-private-page-frag-caches-for-rxdma.patch
 
-          # 3. Apply PR #26461 (EDMA wake Tx queue of completed ring)
-          curl -fsSL "https://github.com/openwrt/openwrt/pull/26461.patch" | git apply --check
+          # 3. EDMA Tx queue wake (#26461), EDMA Rx IRQ spread (#26741), QCN9074 PCI MSI spread (#26253)
           curl -fsSL "https://github.com/openwrt/openwrt/pull/26461.patch" | git apply
-
-          # 4. Apply PR #26741 (EDMA spread Rx ring interrupts over cores)
-          curl -fsSL "https://github.com/openwrt/openwrt/pull/26741.patch" | git apply --check
           curl -fsSL "https://github.com/openwrt/openwrt/pull/26741.patch" | git apply
-
-          # 5. Apply ath11k PCI DP MSI IRQ spread from PR #26253 (skipping ath10k-ct/ath10k)
-          curl -fsSL "https://github.com/openwrt/openwrt/pull/26253.patch" \
-            | git apply --include='package/kernel/mac80211/patches/ath11k/*' --check
           curl -fsSL "https://github.com/openwrt/openwrt/pull/26253.patch" \
             | git apply --include='package/kernel/mac80211/patches/ath11k/*'
 
-          # Persist download/ccache dirs
-          mkdir -p ../cache/dl ../cache/ccache
-          ln -sfn "$PWD/../cache/dl" dl
-          ln -sfn "$PWD/../cache/ccache" .ccache
-          echo "max_size = 3.0G" > ../cache/ccache/ccache.conf
+          # 4. Phase 1: qcom_ppe L2 hardware switchdev (from VIKINGYFY/immortalwrt, L2-only + local 0693 fix)
+          VIK_BASE="https://raw.githubusercontent.com/VIKINGYFY/immortalwrt/owrt/target/linux/qualcommbe/patches-6.18"
+          for p in \
+            0500-02-net-ppe-bridge-membership.patch \
+            0501-net-ethernet-qualcomm-ppe-handle-fdb-events.patch \
+            0502-net-ethernet-qualcomm-ppe-trap-bpdu-to-cpu.patch \
+            0503-net-ethernet-qualcomm-ppe-report-learned-fdb-to-bridge.patch \
+            0504-net-ethernet-qualcomm-ppe-offload-bridge-port-flags.patch \
+            0505-01-net-ppe-bridge-vlan-domains.patch \
+            0505-02-net-ethernet-qualcomm-ppe-age-out-learned-fdb-entries.patch \
+            0620-net-ethernet-qualcomm-ppe-wait-for-FDB-results.patch \
+            0690-net-ppe-validate-active-bridge-vlan-mode.patch; do
+            curl -fsSL "$VIK_BASE/$p" -o "target/linux/qualcommbe/patches-6.18/$p"
+          done
+          # Strip doc-only hunk from 0690
+          python3 -c '
+          import pathlib, re
+          p = pathlib.Path("target/linux/qualcommbe/patches-6.18/0690-net-ppe-validate-active-bridge-vlan-mode.patch")
+          parts = re.split(r"(?=^--- a/)", p.read_text(), flags=re.M)
+          p.write_text("".join(x for x in parts if not x.startswith("--- a/Documentation/")))
+          '
+          cp "$ROOT/patches/qualcommbe/0693-net-ppe-preserve-mac-tx-across-bridge-detach.patch" \
+            target/linux/qualcommbe/patches-6.18/
 
-          # Update & install feeds
+          # 5. Phase 2 + 3: ath11k zero-copy page_pool, REO coalescing, AQL, and fixed QCN9074 TCL TSO
+          PR26075_REF="539bc14f224ff41c49240b1da8783be2f7c68f58"
+          MAC_BASE="https://raw.githubusercontent.com/openwrt/openwrt/$PR26075_REF/package/kernel/mac80211/patches"
+          for p in $(curl -fsSL "https://api.github.com/repos/openwrt/openwrt/contents/package/kernel/mac80211/patches/subsys?ref=$PR26075_REF" \
+            | python3 -c 'import json,sys; print(" ".join(sorted(x["name"] for x in json.load(sys.stdin) if x["name"][:3] in ("514","515","516","517","518","519","520","521","522"))))'); do
+            curl -fsSL "$MAC_BASE/subsys/$p" -o "package/kernel/mac80211/patches/subsys/$p"
+          done
+          for p in $(curl -fsSL "https://api.github.com/repos/openwrt/openwrt/contents/package/kernel/mac80211/patches/ath11k?ref=$PR26075_REF" \
+            | python3 -c 'import json,sys; print(" ".join(sorted(x["name"] for x in json.load(sys.stdin) if x["name"].startswith(("97","98","99")) and not x["name"].startswith("9926-"))))'); do
+            curl -fsSL "$MAC_BASE/ath11k/$p" -o "package/kernel/mac80211/patches/ath11k/$p"
+          done
+          cp "$ROOT/patches/ath11k/9930-wifi-ath11k-enable-tcl-tso-on-ipq9574-and-qcn9074.patch" \
+            package/kernel/mac80211/patches/ath11k/
+
+          # Persist download/ccache dirs
+          mkdir -p "$ROOT/cache/dl" "$ROOT/cache/ccache"
+          ln -sfn "$ROOT/cache/dl" dl
+          ln -sfn "$ROOT/cache/ccache" .ccache
+          echo "max_size = 3.0G" > "$ROOT/cache/ccache/ccache.conf"
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          # Generate .config for JIDU6411 AP/mesh image
           cat << 'EOF' > .config
           CONFIG_TARGET_qualcommbe=y
           CONFIG_TARGET_qualcommbe_ipq95xx=y
@@ -117,7 +149,7 @@ jobs:
           path: |
             cache/dl
             cache/ccache
-          key: jidu6411-cache-${{ github.run_id }}
+          key: jidu6411-offload-cache-${{ github.run_id }}
 
       - name: Collect firmware artifacts
         run: |
